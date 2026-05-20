@@ -154,8 +154,8 @@ juno-ecommerce/
 │
 ├── docker-compose.yml            # PostgreSQL + Airflow (webserver + scheduler)
 ├── pytest.ini                    # Coverage config — 85% minimum enforced
-├── requirements.txt              # extract → archive → transform → load
-├── ebay_scraper.py
+├── requirements.txt              
+├── ebay_scraper.py               # extract → archive → transform → load
 ├── .env.example                  # Credential template — copy to .env
 ├── .gitignore
 └── README.md
@@ -328,14 +328,14 @@ All tests mock HTTP calls and database writes so they run fully offline and comp
 ```
 tests/test_pipeline.py  ..................  8 passed
 
-tests/test_pipeline.py::test_clean_price PASSED                                                                                              [ 12%]
-tests/test_pipeline.py::test_clean_price_handles_price_range PASSED                                                                                              [ 25%]
-tests/test_pipeline.py::test_parse_page PASSED                                                                                              [ 37%]
-tests/test_pipeline.py::test_parse_page_skips_shop_on_ebay PASSED                                                                                              [ 50%]
-tests/test_pipeline.py::test_transform PASSED                                                                                              [ 62%]
-tests/test_pipeline.py::test_transform_drops_invalid_prices PASSED                                                                                              [ 75%]
-tests/test_pipeline.py::test_transform_raises_on_missing_columns PASSED                                                                                              [ 87%]
-tests/test_pipeline.py::test_extract_returns_dataframe PASSED                                                                                              [100%]
+tests/test_pipeline.py::test_clean_price PASSED                                             [ 12%]
+tests/test_pipeline.py::test_clean_price_handles_price_range PASSED                         [ 25%]
+tests/test_pipeline.py::test_parse_page PASSED                                              [ 37%]
+tests/test_pipeline.py::test_parse_page_skips_shop_on_ebay PASSED                           [ 50%]
+tests/test_pipeline.py::test_transform PASSED                                               [ 62%]
+tests/test_pipeline.py::test_transform_drops_invalid_prices PASSED                          [ 75%]
+tests/test_pipeline.py::test_transform_raises_on_missing_columns PASSED                     [ 87%]
+tests/test_pipeline.py::test_extract_returns_dataframe PASSED                               [100%]
 ```
 
 ---
