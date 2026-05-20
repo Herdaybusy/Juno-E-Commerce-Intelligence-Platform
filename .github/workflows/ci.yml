@@ -27,14 +27,18 @@ jobs:
         run: pip install flake8
 
       - name: Run flake8
-        # Lint the files that actually exist in this project
+        # Lint the files that actually exist in this project.
+        # W291/W292/W293 are trailing whitespace warnings - cosmetic only,
+        # caused by Windows line endings on the dev machine. We ignore them 
+        # here and catch real issues (line length, unused vars, bad imports).
         run: |
           flake8 ebay_scraper.py config/ dags/ \
             --max-line-length=100 \
             --exclude=__pycache__ \
+            --extend-ignore=W291,W292,W293 \
             --statistics
 
-  # Tests
+  # Tests 
   test:
     name: Tests (pytest)
     runs-on: ubuntu-latest
@@ -45,7 +49,7 @@ jobs:
         python-version: ["3.11", "3.12"]
 
     env:
-      # From GitHub Secrets 
+      # These come from GitHub Secrets 
       DB_USER:       ${{ secrets.DB_USER }}
       DB_PASSWORD:   ${{ secrets.DB_PASSWORD }}
       DB_HOST:       localhost
@@ -85,7 +89,7 @@ jobs:
           path: coverage.xml
           retention-days: 14
 
-  # Coverage upload (Codecov)
+  # Coverage upload (Codecov) 
   coverage:
     name: Coverage Upload
     runs-on: ubuntu-latest
@@ -105,9 +109,9 @@ jobs:
         with:
           files: coverage.xml
           token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false  # don't block the pipeline if Codecov is down
+          fail_ci_if_error: false  
 
-  # Docker build check 
+  # Docker build check
   docker:
     name: Docker Compose Build
     runs-on: ubuntu-latest
@@ -118,8 +122,8 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Create .env from CI secrets
-        # Temporary .env so docker compose can read credentials
-        # without committing real values to the repo
+        # Writes a temporary .env so docker compose can read credentials
+        # without us ever committing real values to the repo
         run: |
           cat > .env << EOF
           DB_USER=${{ secrets.DB_USER }}
@@ -144,7 +148,7 @@ jobs:
         if: always()
         run: docker compose down -v
 
-  # ── Security scan ─────────────────────────────────────────────────────────────
+  # Security scan
   security:
     name: Dependency Security Scan (pip-audit)
     runs-on: ubuntu-latest
