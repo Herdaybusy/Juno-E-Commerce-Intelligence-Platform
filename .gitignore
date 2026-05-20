@@ -1,2 +1,43 @@
-# files
+# Environment variables — never commit these
 .env
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Pytest cache
+.pytest_cache/
+.cache/
+
+# Logs — these are runtime files, not source code
+etl_pipeline.log
+*.log
+
+# Debug dumps from the scraper
+debug_page.html
+
+# Data files — too large and too frequently changing for version control
+data/raw_laptop_data.csv
+data/cleaned_data/
+Laptop Record.csv
+*.csv
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE config
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Compiled distribution / packaging
+dist/
+build/
+*.egg-info/

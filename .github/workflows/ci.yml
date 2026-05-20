@@ -1,0 +1,165 @@
+name: Juno CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+
+  # Lint
+  lint:
+    name: Lint (flake8)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install flake8
+        run: pip install flake8
+
+      - name: Run flake8
+        # Lint the files that actually exist in this project
+        run: |
+          flake8 ebay_scraper.py config/ dags/ \
+            --max-line-length=100 \
+            --exclude=__pycache__ \
+            --statistics
+
+  # Tests
+  test:
+    name: Tests (pytest)
+    runs-on: ubuntu-latest
+    needs: lint
+
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    env:
+      # From GitHub Secrets 
+      DB_USER:       ${{ secrets.DB_USER }}
+      DB_PASSWORD:   ${{ secrets.DB_PASSWORD }}
+      DB_HOST:       localhost
+      DB_PORT:       5432
+      DB_NAME:       juno_ecommerce_ci
+      EBAY_APP_ID:   ${{ secrets.EBAY_APP_ID }}
+      EBAY_CERT_ID:  ${{ secrets.EBAY_CERT_ID }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests with coverage
+        run: |
+          pytest \
+            --cov=ebay_scraper \
+            --cov=config \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            -v
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-py${{ matrix.python-version }}
+          path: coverage.xml
+          retention-days: 14
+
+  # Coverage upload (Codecov)
+  coverage:
+    name: Coverage Upload
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report-py3.11
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false  # don't block the pipeline if Codecov is down
+
+  # Docker build check 
+  docker:
+    name: Docker Compose Build
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create .env from CI secrets
+        # Temporary .env so docker compose can read credentials
+        # without committing real values to the repo
+        run: |
+          cat > .env << EOF
+          DB_USER=${{ secrets.DB_USER }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          DB_NAME=juno_ecommerce_ci
+          DB_HOST=juno-db
+          DB_PORT=5432
+          EBAY_APP_ID=${{ secrets.EBAY_APP_ID }}
+          EBAY_CERT_ID=${{ secrets.EBAY_CERT_ID }}
+          EOF
+
+      - name: Build Docker Compose services
+        run: docker compose build --no-cache
+
+      - name: Verify Postgres starts cleanly
+        run: |
+          docker compose up -d juno-db
+          sleep 10
+          docker compose exec -T juno-db pg_isready -U ${{ secrets.DB_USER }}
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
+
+  # ── Security scan ─────────────────────────────────────────────────────────────
+  security:
+    name: Dependency Security Scan (pip-audit)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit dependencies
+        run: pip-audit -r requirements.txt
