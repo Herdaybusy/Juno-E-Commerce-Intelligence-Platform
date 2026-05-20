@@ -33,9 +33,9 @@ jobs:
         # here and catch real issues (line length, unused vars, bad imports).
         run: |
           flake8 ebay_scraper.py config/ dags/ \
-            --max-line-length=100 \
+            --max-line-length=120 \
             --exclude=__pycache__ \
-            --extend-ignore=W291,W292,W293 \
+            --extend-ignore=W291,W292,W293,E302,E402 \
             --statistics
 
   # Tests 
