@@ -1,72 +1,87 @@
 """
-Juno E-Commerce Pipeline DAG
+Airflow DAG — Juno E-Commerce Pipeline
 
-Runs eBay Browse API extraction for:
-- laptops
-- mobile phones
+Pulls daily eBay UK marketplace listings for laptops and mobile phones
+via the eBay Browse API, transforms the data, and loads it into PostgreSQL
+for Juno's market intelligence platform.
 
-Stores cleaned data in PostgreSQL for analytics.
+Tasks
+
+  fetch_laptops   — eBay UK laptop listings (up to 1,000 records per run)
+  fetch_phones    — eBay UK mobile phone listings (same depth)
+
+The two tasks run in parallel — neither one blocks the other.
+Add more product categories by duplicating the PythonOperator pattern below.
+
+Notes
+-----
+We switched from scraping to the official eBay Browse API because eBay's
+search results pages are JavaScript-rendered, making reliable HTML scraping
+impractical. The API gives us structured JSON directly with no bot detection
+to work around. 
 """
 
-import os
 import sys
+import os
 from datetime import datetime, timedelta
 
-from airflow import DAG
-from airflow.operators.python import PythonOperator
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Ensure project root is available to Airflow
+from airflow import DAG  # noqa: E402
+from airflow.operators.python import PythonOperator  # noqa: E402
+from ebay_scraper import run as run_pipeline  # noqa: E402
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
-
-from ebay_scraper import run as run_pipeline
-
-
-# Default DAG arguments
 
 DEFAULT_ARGS = {
-    "owner": "juno-data-team",
-    "depends_on_past": False,
-    "email_on_failure": True,
-    "email_on_retry": False,
-    "retries": 2,
-    "retry_delay": timedelta(minutes=5),
+    'owner': 'juno-data-team',
+    'depends_on_past': False,
+    'email_on_failure': True,
+    'email_on_retry': False,
+    'retries': 2,
+    'retry_delay': timedelta(minutes=5),
 }
 
-
-# DAG Definition
-
 with DAG(
-    dag_id="juno_ecommerce_pipeline",
+    dag_id='juno_ecommerce_pipeline',
     default_args=DEFAULT_ARGS,
-    description="Daily eBay UK product ingestion via Browse API",
-    schedule="0 6 * * *",
+    description=(
+        'Daily eBay UK product listing pull via Browse API for '
+        'Juno market intelligence'
+    ),
+    schedule_interval='0 6 * * *',
     start_date=datetime(2024, 1, 1),
     catchup=False,
-    tags=["juno", "ecommerce", "ebay"],
+    tags=['juno', 'ecommerce', 'ebay-api'],
 ) as dag:
 
     fetch_laptops = PythonOperator(
-        task_id="fetch_laptops",
+        task_id='fetch_laptops',
         python_callable=run_pipeline,
         op_kwargs={
-            "search_term": "laptops",
-            "result_limit": 1000,
+            'search_term': 'laptops',
+            'result_limit': 1000,
         },
+        doc_md="""
+        Pulls up to 1,000 laptop listings from the eBay UK marketplace
+        via the Browse API. Results are cleaned and loaded into the
+        `laptops_listings` table in PostgreSQL.
+        """,
     )
 
     fetch_phones = PythonOperator(
-        task_id="fetch_phones",
+        task_id='fetch_phones',
         python_callable=run_pipeline,
         op_kwargs={
-            "search_term": "mobile phones",
-            "result_limit": 1000,
+            'search_term': 'mobile phones',
+            'result_limit': 1000,
         },
+        doc_md="""
+        Pulls up to 1,000 mobile phone listings from the eBay UK marketplace.
+        Feeds the `mobile_phones_listings` table for cross-category pricing
+        analysis alongside laptops.
+        """,
     )
 
-    # Parallel execution (no dependency)
-    fetch_laptops
-    fetch_phones
+    # both tasks run in parallel — no dependency between them
+    [fetch_laptops, fetch_phones]

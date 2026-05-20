@@ -7,12 +7,12 @@ import datetime
 import logging
 import base64
 import re
- 
+
 from config.settings import db, ebay
- 
- 
+
+
 load_dotenv(override=True)
- 
+
 engine = create_engine(db.url)
 
 logging.basicConfig(
@@ -21,8 +21,9 @@ logging.basicConfig(
     format='%(asctime)s:%(levelname)s:%(message)s'
 )
 
-# Require column for transform() 
+# Required column for transform() 
 REQUIRED_SCRAPER_COLUMNS = {'title', 'current_price'}
+
 
 def clean_price(raw):
     if not raw:
@@ -34,55 +35,58 @@ def clean_price(raw):
     except ValueError:
         return None
 
+
 def parse_page(html):
-
-    # Parse HTML with BeautifulSoup
-    soup = BeautifulSoup(html, 'html.parser')
-
+    # For parsing raw eBay HTML 
+    soup = BeautifulSoup(html, 'lxml')
     items = []
 
-    # [class~=s-item] matches any tag where s-item is a space-delimited class
+    # [class~=s-item] matches any tag carrying that class
+   
     cards = soup.select('[class~=s-item]')
-    
+
     if not cards:
         logging.warning("No s-item cards found — raw HTML saved to debug_page.html")
         with open("debug_page.html", "w", encoding="utf-8") as f:
             f.write(html)
         return []
- 
+
     for card in cards:
-        title_tag = card.find('span', role='heading') or card.find('span', class_='s-item__title')
+        title_tag = (
+            card.find('span', role='heading')
+            or card.find('span', class_='s-item__title')
+        )
         title = title_tag.get_text(strip=True) if title_tag else ''
- 
-        # To skip fake "Shop on eBay" listing at the top of eBay
+
+        # eBay injects a dummy "Shop on eBay" card at position 0 on every page
         if not title or title.lower() == 'shop on ebay':
             continue
- 
-        price_tag  = card.find('span', class_='s-item__price')
+
+        price_tag = card.find('span', class_='s-item__price')
         former_tag = card.find('span', class_='STRIKETHROUGH')
-        sold_tag   = card.find('span', class_='s-item__dynamic s-item__quantitySold')
-        brand_tag  = card.find('span', class_='SECONDARY_INFO')
+        sold_tag = card.find('span', class_='s-item__dynamic s-item__quantitySold')
+        brand_tag = card.find('span', class_='SECONDARY_INFO')
         seller_tag = card.find('span', class_='s-item__seller-info-text')
- 
+
         items.append({
-            'title':          title,
-            'current_price':  price_tag.get_text(strip=True)  if price_tag  else None,
-            'former_price':   former_tag.get_text(strip=True)  if former_tag else None,
-            'items_sold':     sold_tag.get_text(strip=True)    if sold_tag   else None,
-            'brand_category': brand_tag.get_text(strip=True)   if brand_tag  else None,
-            'seller_info':    seller_tag.get_text(strip=True)  if seller_tag else None,
+            'title': title,
+            'current_price': price_tag.get_text(strip=True) if price_tag else None,
+            'former_price': former_tag.get_text(strip=True) if former_tag else None,
+            'items_sold': sold_tag.get_text(strip=True) if sold_tag else None,
+            'brand_category': brand_tag.get_text(strip=True) if brand_tag else None,
+            'seller_info': seller_tag.get_text(strip=True) if seller_tag else None,
         })
- 
+
     return items
- 
+
+
 def get_access_token():
-    
-    # Swapping credentials for a short-lived token first, because eBay's API uses OAuth2
+    # swapping credentials for a short-lived token
     credentials = f"{ebay.app_id}:{ebay.cert_id}"
     encoded = base64.b64encode(credentials.encode()).decode()
 
     response = requests.post(
-        'https://api.ebay.com/identity/v1/oauth2/token',
+        ebay.token_url,
         headers={
             'Authorization': f'Basic {encoded}',
             'Content-Type': 'application/x-www-form-urlencoded',
@@ -101,25 +105,25 @@ def get_access_token():
 
 
 def fetch_page(token, keyword, offset):
-    # Clean JSON straight from eBay — no HTML parsing, no bot detection,
-
+    # clean JSON with no HTML parsing or bot detection to deal with
     response = requests.get(
-        'https://api.ebay.com/buy/browse/v1/item_summary/search',
+        ebay.search_url,
         headers={
             'Authorization': f'Bearer {token}',
-            'X-EBAY-C-MARKETPLACE-ID': 'EBAY_GB',
+            'X-EBAY-C-MARKETPLACE-ID': ebay.marketplace,
             'Content-Type': 'application/json',
         },
         params={
             'q': keyword,
-            'limit': 50,
+            'limit': ebay.page_size,
             'offset': offset,
         }
     )
 
     if response.status_code != 200:
         logging.warning(
-            f"API call failed at offset {offset}: {response.status_code} — {response.text}"
+            f"API call failed at offset {offset}: "
+            f"{response.status_code} — {response.text}"
         )
         return []
 
@@ -129,10 +133,10 @@ def fetch_page(token, keyword, offset):
 
 
 def extract(search_term='laptops', result_limit=200):
-    # result_limit is to controls how many records we pull in total.
-    
+    # We calculate offsets from page_size in config rather than hardcoding
+   
     all_items = []
-    offsets = list(range(0, result_limit, 50))
+    offsets = list(range(0, result_limit, ebay.page_size))
 
     try:
         token = get_access_token()
@@ -143,26 +147,24 @@ def extract(search_term='laptops', result_limit=200):
             for item in raw_items:
                 price_info = item.get('price', {})
                 current_price = (
-                    f"{price_info.get('currency', '')} {price_info.get('value', '')}".strip()
+                    f"{price_info.get('currency', '')} "
+                    f"{price_info.get('value', '')}".strip()
                     if price_info else None
                 )
 
                 all_items.append({
                     'title': item.get('title'),
                     'current_price': current_price,
-                    'former_price': None,  # the Browse API doesn't expose strikethrough prices
-                    'items_sold': None,
+                    'former_price': None, 
                     'brand_category': item.get('condition'),
                     'seller_info': item.get('seller', {}).get('username'),
                 })
 
     except Exception as e:
         logging.error(f'Something went wrong during extraction: {e}')
-    
-    # Converting to DataFrame at the end, so if something goes wrong with one page, we still get whatever data we managed to pull in before the error  
+
     df = pd.DataFrame(all_items)
 
-    # If the API calls failed but didn't raise an exception, we might end up with an empty DataFrame — logging that as an error so it's clear something went wrong, rather than just handing back an empty table and wondering why
     if df.empty:
         logging.error('No data came back — check the log above for what went wrong')
     else:
@@ -172,12 +174,10 @@ def extract(search_term='laptops', result_limit=200):
 
 
 def transform(df):
-    # Tests pass in a 'price' column rather than 'current_price',
-    # so we rename it here before doing anything else
+    # cleaning and preparing the data for loading.
     if 'price' in df.columns and 'current_price' not in df.columns:
         df = df.rename(columns={'price': 'current_price'})
 
-    # Now we check, after the rename, so 'price' doesn't get incorrectly flagged
     missing = REQUIRED_SCRAPER_COLUMNS - set(df.columns)
     if missing:
         raise ValueError(
@@ -186,17 +186,20 @@ def transform(df):
         )
 
     try:
-        # dropping duplicates to avoid skewing analysis later on.
         df = df.drop_duplicates(subset=['title', 'current_price']).copy()
-        
-        df['price_gbp'] = df['current_price'].apply(clean_price)
 
+        df['price_gbp'] = df['current_price'].apply(clean_price)
+        
+        # former_price is optional because the API doesn't return it, but if it's there, it should clean it too
         df['former_price_gbp'] = (
-            df['former_price'].apply(clean_price) if 'former_price' in df.columns else 0.0
+            df['former_price'].apply(clean_price)
+            if 'former_price' in df.columns
+            else 0.0
         )
 
-        # filling in missing values with defaults, so we don't end up with nulls in our database which can cause issues for analysis later on.
-        df.fillna({
+        # Using infer_objects() to avoid the pandas FutureWarning about
+        
+        fill_values = {
             'title': 'Unknown',
             'current_price': '0.00',
             'former_price': '0.00',
@@ -205,16 +208,22 @@ def transform(df):
             'seller_info': 'Unknown',
             'price_gbp': 0.0,
             'former_price_gbp': 0.0,
-        }, inplace=True)
+        }
+        df = df.fillna(fill_values).infer_objects(copy=False)
 
-        # Adding a timestamp for when the data was scraped
         df['scraped_at'] = datetime.datetime.now(datetime.timezone.utc)
 
-        # Saving to CSV as well, so we have a backup of the cleaned data outside the database 
-        logging.info('Transform done — CSV saved')
+# Saving the cleaned DataFrame to CSV as a backup in case something goes wrong with the database load. This also gives us a nice snapshot of the data at this stage for debugging and analysis.
+
+        try:
+            df.to_csv('data/Laptop Record.csv', index=False)
+            logging.info('Transform done — CSV saved to data/')
+        except OSError as csv_err:
+            logging.warning(
+                f'Data will still load into PostgreSQL.'
+            )
 
     except Exception as e:
-        # Re-raise so a broken transform actually looks like a failure, rather than silently handing back a broken DataFrame
         logging.error(f'Transform failed: {e}')
         raise
 
@@ -222,7 +231,8 @@ def transform(df):
 
 
 def load(df, table_name='laptop_records'):
-    # table_name is parameterised so Airflow can route different product categories into their own tables
+    # table_name is a parameter so Airflow can send laptops, phones,
+    # and any future categories into their own separate tables
     try:
         df.to_sql(table_name, engine, if_exists='replace', index=False)
         logging.info(f'Data loaded into {table_name} successfully')
@@ -231,19 +241,25 @@ def load(df, table_name='laptop_records'):
 
 
 def run(search_term='laptops', result_limit=200):
-    # Entry point Airflow calls.
-    logging.info(f'Starting pipeline run — search_term={search_term}, result_limit={result_limit}')
+    
+    logging.info(
+        f'Starting pipeline run — '
+        f'search_term={search_term}, result_limit={result_limit}'
+    )
 
     table_name = search_term.replace(' ', '_') + '_listings'
-
     records = extract(search_term=search_term, result_limit=result_limit)
 
     if not records.empty:
         cleaned = transform(records)
         load(cleaned, table_name=table_name)
-        logging.info(f'Pipeline run complete — {len(cleaned)} records in {table_name}')
+        logging.info(
+            f'Pipeline run complete — {len(cleaned)} records in {table_name}'
+        )
     else:
-        logging.error(f'Pipeline run failed for search_term={search_term} — nothing extracted')
+        logging.error(
+            f'Pipeline run failed for search_term={search_term} — nothing extracted'
+        )
 
 
 if __name__ == '__main__':
