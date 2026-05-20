@@ -20,11 +20,11 @@ class DatabaseConfig:
 
 
 class EbayApiConfig:
-    # Credentials loaded from .env so they're never hardcoded or committed
+    # Credentials for eBay API 
     app_id = os.getenv('EBAY_APP_ID')
     cert_id = os.getenv('EBAY_CERT_ID')
 
-    # OAuth2 token endpoint 
+    # OAuth token endpoint for eBay API
     token_url = 'https://api.ebay.com/identity/v1/oauth2/token'
 
     # Browse API search endpoint
@@ -37,6 +37,6 @@ class EbayApiConfig:
     page_size = 50
 
 
-# Single instances imported everywhere
+# Single instances imported everywhere - no need to instantiate per module
 db = DatabaseConfig()
 ebay = EbayApiConfig()

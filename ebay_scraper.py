@@ -21,32 +21,32 @@ logging.basicConfig(
     format='%(asctime)s:%(levelname)s:%(message)s'
 )
 
-# Required column for transform() 
+# Column required for transform() 
+
 REQUIRED_SCRAPER_COLUMNS = {'title', 'current_price'}
 
 
 def clean_price(raw):
     if not raw:
         return None
-    # Strip out everything that isn't a digit or a decimal point
+    # To strip out everything that isn't a digit or a decimal point
     cleaned = re.sub(r'[^\d.]', '', str(raw).replace(',', ''))
     try:
         return float(cleaned)
     except ValueError:
         return None
 
-
 def parse_page(html):
-    # For parsing raw eBay HTML 
+    
+    # Required for test_pipeline to run
     soup = BeautifulSoup(html, 'lxml')
     items = []
 
     # [class~=s-item] matches any tag carrying that class
-   
     cards = soup.select('[class~=s-item]')
 
     if not cards:
-        logging.warning("No s-item cards found — raw HTML saved to debug_page.html")
+        logging.warning("No s-item cards found - raw HTML saved to debug_page.html")
         with open("debug_page.html", "w", encoding="utf-8") as f:
             f.write(html)
         return []
@@ -81,7 +81,8 @@ def parse_page(html):
 
 
 def get_access_token():
-    # swapping credentials for a short-lived token
+    # eBay uses OAuth2 
+    # Swapping App ID and Cert ID for a short-lived token
     credentials = f"{ebay.app_id}:{ebay.cert_id}"
     encoded = base64.b64encode(credentials.encode()).decode()
 
@@ -96,16 +97,17 @@ def get_access_token():
 
     if response.status_code != 200:
         raise RuntimeError(
-            f"Couldn't get an access token: {response.status_code} — {response.text}"
+            f"Couldn't get an access token: {response.status_code} - {response.text}"
         )
 
     token = response.json().get('access_token')
-    logging.info('Got eBay access token — ready to make API calls')
+    logging.info('Got eBay access token - ready to make API calls')
     return token
 
 
 def fetch_page(token, keyword, offset):
-    # clean JSON with no HTML parsing or bot detection to deal with
+    
+    # Making a single API call to the Browse endpoint with the search term, page size, and offset
     response = requests.get(
         ebay.search_url,
         headers={
@@ -123,21 +125,20 @@ def fetch_page(token, keyword, offset):
     if response.status_code != 200:
         logging.warning(
             f"API call failed at offset {offset}: "
-            f"{response.status_code} — {response.text}"
+            f"{response.status_code} - {response.text}"
         )
         return []
 
     items = response.json().get('itemSummaries', [])
-    logging.info(f"Offset {offset} — got {len(items)} items back")
+    logging.info(f"Offset {offset} - got {len(items)} items back")
     return items
 
 
 def extract(search_term='laptops', result_limit=200):
-    # We calculate offsets from page_size in config rather than hardcoding
-   
+    # Looping through offsets to get multiple pages of results until we hit the result_limit
     all_items = []
     offsets = list(range(0, result_limit, ebay.page_size))
-
+    
     try:
         token = get_access_token()
 
@@ -155,7 +156,8 @@ def extract(search_term='laptops', result_limit=200):
                 all_items.append({
                     'title': item.get('title'),
                     'current_price': current_price,
-                    'former_price': None, 
+                    'former_price': None,
+                    'items_sold': None,
                     'brand_category': item.get('condition'),
                     'seller_info': item.get('seller', {}).get('username'),
                 })
@@ -166,39 +168,40 @@ def extract(search_term='laptops', result_limit=200):
     df = pd.DataFrame(all_items)
 
     if df.empty:
-        logging.error('No data came back — check the log above for what went wrong')
+        logging.error('No data came back - check the log above for what went wrong')
     else:
-        logging.info(f'Extraction done — {len(df)} records pulled in total')
+        logging.info(f'Extraction done - {len(df)} records pulled in total')
 
     return df
 
 
 def transform(df):
-    # cleaning and preparing the data for loading.
+    # Renaming 'price' to 'current_price' if it exists
     if 'price' in df.columns and 'current_price' not in df.columns:
         df = df.rename(columns={'price': 'current_price'})
-
+        
+    # Checking for required columns before proceeding with transformations
     missing = REQUIRED_SCRAPER_COLUMNS - set(df.columns)
     if missing:
         raise ValueError(
             f"transform() is missing these columns: {missing}. "
             f"Got: {list(df.columns)}"
         )
-
+    # Dropping duplicates based on title and current_price
     try:
         df = df.drop_duplicates(subset=['title', 'current_price']).copy()
-
-        df['price_gbp'] = df['current_price'].apply(clean_price)
         
-        # former_price is optional because the API doesn't return it, but if it's there, it should clean it too
+        # Cleaning price fields to get numeric values in GBP
+        df['price_gbp'] = df['current_price'].apply(clean_price)
+
+        # Catching any unexpected issues during transform to avoid silent failures
         df['former_price_gbp'] = (
             df['former_price'].apply(clean_price)
             if 'former_price' in df.columns
             else 0.0
         )
 
-        # Using infer_objects() to avoid the pandas FutureWarning about
-        
+        # Filling any missing values in critical columns to avoid issues in load and to ensure consistent data types
         fill_values = {
             'title': 'Unknown',
             'current_price': '0.00',
@@ -209,21 +212,25 @@ def transform(df):
             'price_gbp': 0.0,
             'former_price_gbp': 0.0,
         }
+        # infer_objects with copy=False to avoid unnecessary memory usage
         df = df.fillna(fill_values).infer_objects(copy=False)
 
+        # Adding a timestamp for when the data was scraped 
         df['scraped_at'] = datetime.datetime.now(datetime.timezone.utc)
 
-# Saving the cleaned DataFrame to CSV as a backup in case something goes wrong with the database load. This also gives us a nice snapshot of the data at this stage for debugging and analysis.
-
+        # Saving a copy of the cleaned data to CSV for quick inspection without needing to query the database
         try:
             df.to_csv('data/Laptop Record.csv', index=False)
-            logging.info('Transform done — CSV saved to data/')
-        except OSError as csv_err:
+            logging.info('Transform done - CSV saved to data/')
+        except OSError:
             logging.warning(
-                f'Data will still load into PostgreSQL.'
+                'CSV write skipped - disk may be full. '
+                'Data will still load into PostgreSQL.'
             )
 
     except Exception as e:
+        
+        # Catching any unexpected issues during transform to avoid silent failures and to ensure we know exactly what went wrong
         logging.error(f'Transform failed: {e}')
         raise
 
@@ -231,8 +238,8 @@ def transform(df):
 
 
 def load(df, table_name='laptop_records'):
-    # table_name is a parameter so Airflow can send laptops, phones,
-    # and any future categories into their own separate tables
+    
+    # Loading the cleaned DataFrame into PostgreSQL
     try:
         df.to_sql(table_name, engine, if_exists='replace', index=False)
         logging.info(f'Data loaded into {table_name} successfully')
@@ -241,24 +248,25 @@ def load(df, table_name='laptop_records'):
 
 
 def run(search_term='laptops', result_limit=200):
-    
+    # Orchestrating the ETL pipeline with logging at each step to track progress and catch any issues
     logging.info(
-        f'Starting pipeline run — '
+        f'Starting pipeline run - '
         f'search_term={search_term}, result_limit={result_limit}'
     )
-
+    # Deriving the table name from the search term for dynamic loading
     table_name = search_term.replace(' ', '_') + '_listings'
     records = extract(search_term=search_term, result_limit=result_limit)
 
+    # Only proceed to transform and load if we got some data back from extract 
     if not records.empty:
         cleaned = transform(records)
         load(cleaned, table_name=table_name)
         logging.info(
-            f'Pipeline run complete — {len(cleaned)} records in {table_name}'
+            f'Pipeline run complete - {len(cleaned)} records in {table_name}'
         )
     else:
         logging.error(
-            f'Pipeline run failed for search_term={search_term} — nothing extracted'
+            f'Pipeline run failed for search_term={search_term} - nothing extracted'
         )
 
 

@@ -1,36 +1,13 @@
-"""
-Airflow DAG — Juno E-Commerce Pipeline
-
-Pulls daily eBay UK marketplace listings for laptops and mobile phones
-via the eBay Browse API, transforms the data, and loads it into PostgreSQL
-for Juno's market intelligence platform.
-
-Tasks
-
-  fetch_laptops   — eBay UK laptop listings (up to 1,000 records per run)
-  fetch_phones    — eBay UK mobile phone listings (same depth)
-
-The two tasks run in parallel — neither one blocks the other.
-Add more product categories by duplicating the PythonOperator pattern below.
-
-Notes
------
-We switched from scraping to the official eBay Browse API because eBay's
-search results pages are JavaScript-rendered, making reliable HTML scraping
-impractical. The API gives us structured JSON directly with no bot detection
-to work around. 
-"""
-
 import sys
 import os
 from datetime import datetime, timedelta
 
-
+# Add project root to sys.path so we can import the ebay_scraper module
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from airflow import DAG  # noqa: E402
-from airflow.operators.python import PythonOperator  # noqa: E402
-from ebay_scraper import run as run_pipeline  # noqa: E402
+from airflow import DAG 
+from airflow.operators.python import PythonOperator 
+from ebay_scraper import run as run_pipeline 
 
 
 DEFAULT_ARGS = {
@@ -65,7 +42,7 @@ with DAG(
         doc_md="""
         Pulls up to 1,000 laptop listings from the eBay UK marketplace
         via the Browse API. Results are cleaned and loaded into the
-        `laptops_listings` table in PostgreSQL.
+        laptops_listings table in PostgreSQL.
         """,
     )
 
@@ -78,10 +55,10 @@ with DAG(
         },
         doc_md="""
         Pulls up to 1,000 mobile phone listings from the eBay UK marketplace.
-        Feeds the `mobile_phones_listings` table for cross-category pricing
+        Feeds the mobile_phones_listings table for cross-category pricing
         analysis alongside laptops.
         """,
     )
 
-    # both tasks run in parallel — no dependency between them
+    # both tasks run in parallel
     [fetch_laptops, fetch_phones]
