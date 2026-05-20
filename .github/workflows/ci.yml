@@ -140,9 +140,9 @@ jobs:
 
       - name: Verify Postgres starts cleanly
         run: |
-          docker compose up -d juno-db
+          docker compose up -d postgres
           sleep 10
-          docker compose exec -T juno-db pg_isready -U ${{ secrets.DB_USER }}
+          docker compose exec -T postgres pg_isready -U ${{ secrets.DB_USER }}
 
       - name: Tear down
         if: always()
